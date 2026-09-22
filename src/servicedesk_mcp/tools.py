@@ -63,6 +63,200 @@ def register_tools(mcp: FastMCP, client: ServiceDeskClient) -> None:
         return await client.request("GET", "requests", data)
 
     @mcp.tool(annotations=READ_ONLY)
+    async def servicedesk_list_support_groups(limit: int = 50, start_index: StartIndex = 1) -> Json:
+        """List support groups visible to the API-key user."""
+        return await client.request(
+            "GET", "support_groups", client.list_info(limit, start_index, "name", "asc")
+        )
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def servicedesk_get_support_group(group_id: str) -> Json:
+        """Get a support group and its member technicians."""
+        return await client.request("GET", f"support_groups/{group_id}")
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def servicedesk_list_technicians(limit: int = 50, start_index: StartIndex = 1) -> Json:
+        """List ServiceDesk technicians visible to the API-key user."""
+        return await client.request(
+            "GET", "technicians", client.list_info(limit, start_index, "name", "asc")
+        )
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def servicedesk_get_technician(technician_id: str) -> Json:
+        """Get a ServiceDesk technician by ID, including roles and associated sites."""
+        return await client.request("GET", f"technicians/{technician_id}")
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def servicedesk_list_open_requests_for_support_group_members(
+        group_id: Annotated[str | None, "ServiceDesk support group ID"] = None,
+        group_name: Annotated[str | None, "Exact support group name"] = None,
+        max_open_requests: Annotated[
+            int, "Maximum open requests to inspect across ServiceDesk (1-10000)"
+        ] = 1000,
+    ) -> Json:
+        """List open requests assigned to technicians in a support group.
+
+        ServiceDesk does not reliably accept combined status and technician criteria.
+        This tool resolves the group's members, paginates open requests, and filters
+        assignments locally. A group ID is preferred over a name.
+        """
+        resolved_group_id = group_id
+        if not resolved_group_id and not group_name:
+            raise ValueError("Provide group_id or group_name")
+
+        if not resolved_group_id:
+            start_index = 1
+            while True:
+                result = await client.request(
+                    "GET", "support_groups", client.list_info(100, start_index, "name", "asc")
+                )
+                groups = result.get("support_groups", [])
+                matching_group = next(
+                    (
+                        group
+                        for group in groups
+                        if str(group.get("name", "")).casefold() == str(group_name).casefold()
+                    ),
+                    None,
+                )
+                if matching_group is not None:
+                    resolved_group_id = str(matching_group["id"])
+                    break
+                if not result.get("list_info", {}).get("has_more_rows") or not groups:
+                    raise ValueError(f"Support group not found: {group_name}")
+                start_index += len(groups)
+
+        group_result = await client.request("GET", f"support_groups/{resolved_group_id}")
+        support_group = group_result.get("support_group", {})
+        technicians = support_group.get("technicians", [])
+        technician_ids = {
+            str(technician["id"]) for technician in technicians if technician.get("id") is not None
+        }
+
+        maximum = max(1, min(max_open_requests, 10_000))
+        open_requests: list[Json] = []
+        start_index = 1
+        open_total_count = 0
+        has_more_rows = True
+        criteria = {"field": "status.name", "condition": "is", "value": "Open"}
+
+        while has_more_rows and len(open_requests) < maximum:
+            page_size = min(100, maximum - len(open_requests))
+            result = await client.request(
+                "GET",
+                "requests",
+                client.list_info(page_size, start_index, "last_updated_time", "desc", criteria),
+            )
+            page = result.get("requests", [])
+            open_requests.extend(page)
+            list_info = result.get("list_info", {})
+            open_total_count = int(list_info.get("total_count", len(open_requests)))
+            has_more_rows = bool(list_info.get("has_more_rows", False)) and bool(page)
+            start_index += len(page)
+
+        assigned_requests = [
+            request
+            for request in open_requests
+            if str((request.get("technician") or {}).get("id")) in technician_ids
+        ]
+        counts: dict[str, int] = {}
+        for request in assigned_requests:
+            name = str((request.get("technician") or {}).get("name", "Unknown"))
+            counts[name] = counts.get(name, 0) + 1
+
+        return {
+            "support_group": support_group,
+            "list_info": {
+                "total_count": len(assigned_requests),
+                "open_total_count": open_total_count,
+                "inspected_open_count": len(open_requests),
+                "has_more_rows": has_more_rows,
+            },
+            "counts_by_technician": counts,
+            "requests": assigned_requests,
+        }
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def servicedesk_list_active_assigned_requests(
+        technician_id: Annotated[str | None, "ServiceDesk technician user ID"] = None,
+        technician_name: Annotated[str | None, "Exact ServiceDesk technician display name"] = None,
+        technician_email: Annotated[str | None, "Technician email address"] = None,
+        max_assigned_requests: Annotated[
+            int, "Maximum assigned requests to inspect (1-1000)"
+        ] = 1000,
+    ) -> Json:
+        """List all non-closed requests assigned to one technician.
+
+        A technician ID is preferred. When an email is supplied, the tool resolves it
+        to a user ID before querying requests. Pagination and closed-request filtering
+        are handled by the server.
+        """
+        resolved_id = technician_id
+        technician: Json | None = None
+        if not resolved_id and technician_email:
+            user_criteria = {"field": "email_id", "condition": "is", "value": technician_email}
+            user_result = await client.request(
+                "GET", "users", client.list_info(1, criteria=user_criteria)
+            )
+            users = user_result.get("users", [])
+            if not users:
+                return {
+                    "list_info": {
+                        "total_count": 0,
+                        "assigned_total_count": 0,
+                        "has_more_rows": False,
+                    },
+                    "requests": [],
+                }
+            technician = users[0]
+            resolved_id = str(technician["id"])
+
+        if not resolved_id and not technician_name:
+            raise ValueError("Provide technician_id, technician_name, or technician_email")
+
+        criteria = {
+            "field": "technician.id" if resolved_id else "technician.name",
+            "condition": "is",
+            "value": resolved_id or technician_name,
+        }
+        maximum = max(1, min(max_assigned_requests, 1000))
+        requests: list[Json] = []
+        start_index = 1
+        assigned_total_count = 0
+        has_more_rows = True
+
+        while has_more_rows and len(requests) < maximum:
+            page_size = min(100, maximum - len(requests))
+            result = await client.request(
+                "GET",
+                "requests",
+                client.list_info(page_size, start_index, "last_updated_time", "desc", criteria),
+            )
+            page = result.get("requests", [])
+            requests.extend(page)
+            list_info = result.get("list_info", {})
+            assigned_total_count = int(list_info.get("total_count", len(requests)))
+            has_more_rows = bool(list_info.get("has_more_rows", False)) and bool(page)
+            start_index += len(page)
+
+        active_requests = [
+            request
+            for request in requests
+            if request.get("status", {}).get("name", "").casefold() != "closed"
+        ]
+        response: Json = {
+            "list_info": {
+                "total_count": len(active_requests),
+                "assigned_total_count": assigned_total_count,
+                "has_more_rows": has_more_rows,
+            },
+            "requests": active_requests,
+        }
+        if technician is not None:
+            response["technician"] = technician
+        return response
+
+    @mcp.tool(annotations=READ_ONLY)
     async def servicedesk_get_request(request_id: str) -> Json:
         """Get one request by its ServiceDesk request ID."""
         return await client.request("GET", f"requests/{request_id}")
@@ -501,6 +695,55 @@ def register_tools(mcp: FastMCP, client: ServiceDeskClient) -> None:
         """Find ServiceDesk users by email address."""
         criteria = {"field": "email_id", "condition": "is", "value": email}
         return await client.request("GET", "users", client.list_info(limit, criteria=criteria))
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def servicedesk_list_orgusers(
+        limit: int = 50,
+        start_index: StartIndex = 1,
+        is_org_admin: Annotated[
+            bool | None, "When set, filter ESM directory users by OrgAdmin privilege"
+        ] = None,
+    ) -> Json:
+        """List ESM directory users, including the is_org_admin flag."""
+        criteria = (
+            {"field": "is_org_admin", "condition": "is", "value": str(is_org_admin).lower()}
+            if is_org_admin is not None
+            else None
+        )
+        return await client.request(
+            "GET", "orgusers", client.list_info(limit, start_index, criteria=criteria)
+        )
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def servicedesk_get_orguser(user_id: str) -> Json:
+        """Get an ESM directory user, including OrgAdmin status."""
+        return await client.request("GET", f"orgusers/{user_id}")
+
+    @mcp.tool(annotations=WRITE)
+    async def servicedesk_update_orguser(
+        user_id: str,
+        is_org_admin: Annotated[
+            bool | None, "Grant or revoke ESM OrgAdmin. Requires an OrgAdmin API key"
+        ] = None,
+    ) -> Json:
+        """Update ESM directory fields on an organization user."""
+        return await client.request(
+            "PUT", f"orgusers/{user_id}", {"orguser": _compact({"is_org_admin": is_org_admin})}
+        )
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def servicedesk_list_roles(limit: int = 50, start_index: StartIndex = 1) -> Json:
+        """List technician application roles such as SDAdmin and SDGuest."""
+        return await client.request(
+            "GET", "roles", client.list_info(limit, start_index, "name", "asc")
+        )
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def servicedesk_list_org_roles(limit: int = 50, start_index: StartIndex = 1) -> Json:
+        """List organization roles such as CIO, Reporting To, and Department Incharge."""
+        return await client.request(
+            "GET", "org_roles", client.list_info(limit, start_index, "name", "asc")
+        )
 
     @mcp.tool(annotations=READ_ONLY)
     async def servicedesk_download_request_attachment(

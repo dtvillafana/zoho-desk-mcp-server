@@ -6,9 +6,9 @@ API behavior follows the [ServiceDesk Plus on-premises API v3 documentation](htt
 
 ## Features
 
-- Requests: list, search, create, read, update, assign, pick up, close, trash, restore, permanently delete, merge, tag, summarize
+- Requests: list, list active assignments by technician or support-group membership, search, create, read, update, assign, pick up, close, trash, restore, permanently delete, merge, tag, summarize
 - Request context: notes, resolutions, tasks, drafts, and attachments
-- General tasks and ServiceDesk users/technicians
+- Support groups, technicians, general tasks, ServiceDesk users, ESM organization users, and roles
 - Optional Slack notifications when notes are added through MCP
 - Restricted generic API v3 tool for modules supported by your installed ServiceDesk version
 - Structured MCP output, typed arguments, and MCP safety annotations
