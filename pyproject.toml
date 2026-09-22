@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "servicedesk-mcp-server"
+version = "2.0.0"
+description = "Provider-agnostic MCP server for ManageEngine ServiceDesk Plus on-premises"
+readme = "README.md"
+license = "GPL-2.0-or-later"
+requires-python = ">=3.13"
+authors = [
+  { name = "Varun Dubey", email = "varun@wbcomdesigns.com" },
+]
+keywords = [
+  "mcp",
+  "manageengine",
+  "servicedesk-plus",
+  "support-tickets",
+  "model-context-protocol",
+  "helpdesk",
+]
+dependencies = [
+  "fastmcp>=2.0",
+  "httpx>=0.27",
+  "pydantic>=2",
+]
+
+[project.scripts]
+servicedesk-mcp-server = "servicedesk_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/vapvarun/zoho-desk-mcp-server"
+Issues = "https://github.com/vapvarun/zoho-desk-mcp-server/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/servicedesk_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py313"
+src = ["src", "tests"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
