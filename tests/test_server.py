@@ -36,6 +36,7 @@ def test_server_registers_feature_tools() -> None:
         assert "servicedesk_create_draft" in names
         assert "servicedesk_download_request_attachment" in names
         assert "servicedesk_api_request" in names
+        assert "servicedesk_upload_request_attachment" not in names
         assert len(names) >= 35
         await client.close()
 
@@ -285,6 +286,50 @@ def test_list_request_filters_includes_required_module() -> None:
         )
         server = create_server(client)
         await server.call_tool("servicedesk_list_request_filters", {})
+        await client.close()
+
+    asyncio.run(run())
+
+
+def test_pickup_restore_merge_and_tag_match_onprem_api() -> None:
+    async def run() -> None:
+        seen: list[tuple[str, str, dict | None]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = None
+            if request.method == "GET" and request.url.params.get("input_data"):
+                payload = json.loads(request.url.params["input_data"])
+            elif request.content:
+                payload = json.loads(parse_qs(request.content.decode())["input_data"][0])
+            seen.append((request.method, request.url.path, payload))
+            return httpx.Response(200, json={"response_status": {"status": "success"}})
+
+        client = ServiceDeskClient(
+            ServiceDeskConfig("https://sdp.internal", "token"),
+            transport=httpx.MockTransport(handler),
+        )
+        server = create_server(client)
+        await server.call_tool("servicedesk_pickup_request", {"request_id": "1"})
+        await server.call_tool("servicedesk_restore_request", {"request_id": "1"})
+        await server.call_tool(
+            "servicedesk_merge_requests",
+            {"request_id": "1", "merge_request_ids": ["2", "3"]},
+        )
+        await server.call_tool(
+            "servicedesk_add_request_tags", {"request_id": "1", "tags": ["urgent"]}
+        )
+        await server.call_tool("servicedesk_list_drafts", {"request_id": "1"})
+        assert seen == [
+            ("PUT", "/api/v3/requests/1/pickup", None),
+            ("PUT", "/api/v3/requests/1/restore_from_trash", None),
+            (
+                "PUT",
+                "/api/v3/requests/1/merge_requests",
+                {"merge_requests": [{"id": "2"}, {"id": "3"}]},
+            ),
+            ("PUT", "/api/v3/requests/1/tag", {"tags": [{"name": "urgent"}]}),
+            ("GET", "/api/v3/requests/1/drafts", None),
+        ]
         await client.close()
 
     asyncio.run(run())

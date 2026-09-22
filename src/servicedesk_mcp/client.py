@@ -136,24 +136,3 @@ class ServiceDeskClient:
             or mimetypes.guess_type(safe_name)[0]
             or "application/octet-stream",
         }
-
-    async def upload_attachment(self, request_id: str, file_path: str) -> Json:
-        source = Path(file_path).expanduser().resolve(strict=True)
-        endpoint = f"requests/{request_id}/attachments"
-        try:
-            with source.open("rb") as stream:
-                response = await self._http.post(
-                    endpoint,
-                    files={"file": (source.name, stream, mimetypes.guess_type(source.name)[0])},
-                )
-        except (OSError, httpx.HTTPError) as exc:
-            raise ServiceDeskError(f"Attachment upload failed: {exc}") from exc
-        try:
-            body = response.json() if response.content else {}
-        except ValueError as exc:
-            raise ServiceDeskError(
-                f"Attachment upload returned HTTP {response.status_code}"
-            ) from exc
-        if response.is_error:
-            raise ServiceDeskError(f"Attachment upload failed: {json.dumps(body)}")
-        return body

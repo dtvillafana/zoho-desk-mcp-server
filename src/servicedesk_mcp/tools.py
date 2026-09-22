@@ -369,7 +369,7 @@ def register_tools(mcp: FastMCP, client: ServiceDeskClient) -> None:
     @mcp.tool(annotations=WRITE)
     async def servicedesk_pickup_request(request_id: str) -> Json:
         """Assign a request to the technician represented by the configured API key."""
-        return await client.request("PUT", f"requests/{request_id}/pickup", {})
+        return await client.request("PUT", f"requests/{request_id}/pickup")
 
     @mcp.tool(annotations=WRITE)
     async def servicedesk_close_request(
@@ -403,7 +403,7 @@ def register_tools(mcp: FastMCP, client: ServiceDeskClient) -> None:
     @mcp.tool(annotations=WRITE)
     async def servicedesk_restore_request(request_id: str) -> Json:
         """Restore a request from trash."""
-        return await client.request("PUT", f"requests/{request_id}/restore_from_trash", {})
+        return await client.request("PUT", f"requests/{request_id}/restore_from_trash")
 
     @mcp.tool(annotations=READ_ONLY)
     async def servicedesk_search_requests(
@@ -440,7 +440,9 @@ def register_tools(mcp: FastMCP, client: ServiceDeskClient) -> None:
         """Merge duplicate requests into a primary request."""
         merge_requests = [{"id": identifier} for identifier in merge_request_ids]
         return await client.request(
-            "PUT", f"requests/{request_id}/merge_requests", {"requests": merge_requests}
+            "PUT",
+            f"requests/{request_id}/merge_requests",
+            {"merge_requests": merge_requests},
         )
 
     @mcp.tool(annotations=READ_ONLY)
@@ -514,9 +516,9 @@ def register_tools(mcp: FastMCP, client: ServiceDeskClient) -> None:
 
     @mcp.tool(annotations=WRITE)
     async def servicedesk_add_request_tags(request_id: str, tags: list[str]) -> Json:
-        """Add tag names to a request."""
+        """Add tag names to a request. Tags must already exist in ServiceDesk."""
         return await client.request(
-            "POST", f"requests/{request_id}/tag", {"tags": [{"name": tag} for tag in tags]}
+            "PUT", f"requests/{request_id}/tag", {"tags": [{"name": tag} for tag in tags]}
         )
 
     @mcp.tool(annotations=READ_ONLY)
@@ -647,7 +649,7 @@ def register_tools(mcp: FastMCP, client: ServiceDeskClient) -> None:
     @mcp.tool(annotations=READ_ONLY)
     async def servicedesk_list_drafts(request_id: str) -> Json:
         """List email drafts saved on a request."""
-        return await client.request("GET", f"requests/{request_id}/drafts", {})
+        return await client.request("GET", f"requests/{request_id}/drafts")
 
     @mcp.tool(annotations=READ_ONLY)
     async def servicedesk_get_draft(request_id: str, draft_id: str) -> Json:
@@ -758,11 +760,6 @@ def register_tools(mcp: FastMCP, client: ServiceDeskClient) -> None:
             file_name,
             output_directory,
         )
-
-    @mcp.tool(annotations=WRITE)
-    async def servicedesk_upload_request_attachment(request_id: str, file_path: str) -> Json:
-        """Upload a local file as a request attachment."""
-        return await client.upload_attachment(request_id, file_path)
 
     @mcp.tool(annotations=DELETE)
     async def servicedesk_delete_request_attachment(request_id: str, attachment_id: str) -> Json:

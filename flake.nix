@@ -1,12 +1,19 @@
 {
   description = "Provider-agnostic MCP server for ServiceDesk Plus on-premises";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/*";
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
     {
       self,
       nixpkgs,
+      treefmt-nix,
       ...
     }:
     let
@@ -83,6 +90,13 @@
         }
       );
 
-      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt);
+      formatter = forAllSystems (
+        system:
+        treefmt-nix.lib.mkWrapper nixpkgs.legacyPackages.${system} {
+          projectRootFile = "flake.nix";
+          programs.nixfmt.enable = true;
+          programs.ruff-format.enable = true;
+        }
+      );
     };
 }
